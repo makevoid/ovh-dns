@@ -12,8 +12,23 @@ describe Ovh::DNS do
     jar["ovh.it"].should_not == {}
   end
   
-  it "returns a list of domains" do
+  it "lists domains" do
     dns = Ovh::DNS.new
-    p dns.domains
+    domains = dns.domains
+    domains.should be_an(Array)
+    domains.length.should > 1
   end
+  
+
+  it "lists domain records"
+  
+  pending "adds a dns record"
+  pending "deletes a dns record"
+  pending "iterates on all domains"
+
+  after :all do
+    FileUtils.rm_f "#{PATH}/tmp/cookies/login.yml"
+    FileUtils.rm_f "#{PATH}/tmp/objects/domains.dump"
+  end
+
 end
