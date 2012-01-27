@@ -17,18 +17,40 @@ describe Ovh::DNS do
     domains = dns.domains
     domains.should be_an(Array)
     domains.length.should > 1
+    domains.first.should be_a(Ovh::DNS::Domain)
   end
   
-
-  it "lists domain records"
+  it "finds domain records" do
+    dns = Ovh::DNS.new
+    records = dns.domains.first.records
+    records.should be_an(Array)
+    records.first.should be_a(Ovh::DNS::Record)
+  end
   
-  pending "adds a dns record"
-  pending "deletes a dns record"
+  it "adds a dns record" do
+    dns = Ovh::DNS.new
+    domain = dns.domains.first
+    domain.add_record name: "antani", type: "A", dest: "94.23.210.6"
+    record = domain.records.find do |record|
+      record.name == "antani"
+    end
+    record.should be_a(Ovh::DNS::Record)
+  end
+  
+  it "deletes a dns record" do
+    dns = Ovh::DNS.new
+    domain = dns.domains.first
+    domain.add_record name: "antani", type: "A", dest: "94.23.210.6"
+    record = domain.records.find do |record|
+      record.name == "antani"
+    end
+    record.delete
+  end
   pending "iterates on all domains"
 
   after :all do
-    FileUtils.rm_f "#{PATH}/tmp/cookies/login.yml"
-    FileUtils.rm_f "#{PATH}/tmp/objects/domains.dump"
+    # FileUtils.rm_f "#{PATH}/tmp/cookies/login.yml"
+    # FileUtils.rm_f "#{PATH}/tmp/objects/domains.dump"
   end
 
 end

@@ -8,9 +8,11 @@ module Ovh
     
     USER = "cf40475-ovh"
     PASS = File.read File.expand_path("~/.password")
-  
-    LOGIN_URL = "https://www.ovh.it/managerv3/login.pl?xsldoc=&domain=accademiacappiello.it&language=it"
-    HOME_URL = "https://www.ovh.it/managerv3/home.pl"
+    
+    HOST = "https://www.ovh.it"
+    LOGIN_URL = "#{HOST}/managerv3/login.pl?xsldoc=&domain=accademiacappiello.it&language=it"
+    HOME_URL = "#{HOST}/managerv3/home.pl"
+    POST_URL = "#{HOST}/managerv3/hosting-domain-zone.pl"
     
     attr_reader :agent
     
@@ -18,14 +20,64 @@ module Ovh
     include Caching
     
     class Domain
+      include Caching
 
+      attr_reader :name
+      attr_accessor :records
+      
       def initialize(name)
         @name = name
       end
+      
+      def records
+        @records = cache_object "domain_#{@name}_records" do
+          agent = Agent.instance
+          page = agent.get records_url(@name)
+          page = clear_cookies_unless_logged(page) do
+            agent.get records_url(@name)
+          end
+          records = []
+          page.search("table.actionTable tr")[1..-2].each do |tr|
+            tds = tr.search("td")
+            record, type, dest = tds[1..3].map{ |t| t.inner_text }
+            record = record.sub /\.#{@name.gsub ".", "\."}$/, ''
+            records << { name: record, type: type, dest: dest }
+          end
+          records
+        end
+        @records = @records.map{ |rec| Record.new(rec) }
+      end
+      
+      def add_record(record)
+        Record.add(record, self)
+      end
+      
+      private
+      
+      def logged?(page)
+        page.search("body").text =~ /Password perduta\?/
+      end
+      
+      def clear_cookies_unless_logged(page)
+        if logged?(page)
+          cache_clear :cookies, :login
+          Ovh::DNS.new.agent
+          yield
+        else
+          page
+        end
+      end
+      
+      def records_url(domain)
+         "https://www.ovh.it/managerv3/hosting-domain-zone.pl?xsldoc=hosting%2Fdomain%2Fhosting-domain-zone.xsl&language=it&domain=#{domain}&lastxsldoc=hosting%2Fdomain%2Fhosting-domain.xsl&csid=0"
+      end
+      
 
     end    
         
     class Record
+      
+      attr_accessor :name, :type, :dest, :priority
       
       # { name: "asd", type: "MX", dest: "asd.com", priority: 1 }
       def initialize(hash)
@@ -35,30 +87,61 @@ module Ovh
         @priority = hash[:priority]
       end
       
+      def self.add(record, domain)
+        agent = Agent.instance
+        priority = record[:priority] || 1
+        xsldoc = "hosting/domain/hosting-domain-zone.xsl"
+        post = { subdomain: record[:name], target: record[:dest], fieldtype: "#{record[:type]} #{record[:priority]}".strip, todo: "DnsEntryAddCustom", plan: "CUSTOM", language: "it", domain: domain.name, priority: priority, csid: 0, xsldoc: xsldoc, lastxsldoc: xsldoc, hostname: domain.name, service: domain.name}
+        page = agent.post POST_URL, post
+        domain.cache_clear :objects, "domain_#{domain.name}_records"
+        true
+      end
+      
+      def delete
+        agent = Agent.instance
+        priority = @priority || 1
+        xsldoc = "hosting/domain/hosting-domain-zone.xsl"
+        post = { subdomain: @name, target: @dest, fieldtype: "#{@type} #{@priority}".strip, todo: "DnsEntryDelete", language: "it", domain: domain.name, priority: priority, csid: 0, xsldoc: xsldoc, lastxsldoc: xsldoc, hostname: domain.name, service: domain.name}
+        p post
+        page = agent.post POST_URL, post
+        domain.cache_clear :objects, "domain_#{domain.name}_records"
+        true
+      end
+      
     end
     
-    def records_url(domain)
-       "https://www.ovh.it/managerv3/hosting-domain-zone.pl?xsldoc=hosting%2Fdomain%2Fhosting-domain-zone.xsl&language=it&domain=#{domain}&lastxsldoc=hosting%2Fdomain%2Fhosting-domain.xsl&csid=0"
+    class Agent 
+      def self.instance
+        unless defined?(@@agent)
+          @@agent = Mechanize.new
+          @@agent.user_agent = "Mac Safari"
+          @@agent
+        else
+          @@agent
+        end
+      end
+
+      def self.open_in_safari
+        file = "#{PATH}/tmp/pages/index.html"
+        File.open(file, "w") { |f| f.write instance.page.body }
+        `open #{file}`        
+      end
+    end
+    
+    def agent
+      Agent.instance
     end
   
     def initialize
-      @agent = Mechanize.new
-      @agent.user_agent = "Mac Safari"
       login
       start_logger
     end
   
     private
-    
-    def open_in_safari
-      file = "#{PATH}/tmp/pages/index.html"
-      File.open(file, "w") { |f| f.write @agent.page.body }
-      `open #{file}`
-    end
   
     def login
       cache_cookies :login do
-        page = @agent.get LOGIN_URL
+        page = agent.get LOGIN_URL
         form = page.forms.first
         form.session_nic = USER
         form.session_password = PASS
@@ -82,24 +165,13 @@ module Ovh
   
     def domains
       cache_object :domains do 
-        page = @agent.get HOME_URL
+        page = agent.get HOME_URL
         # open_in_safari
         options = page.search "#domainSelect optgroup[label='servizi di hosting'] option"
         options.map do |option|
-          option.text
+          Domain.new option.text
         end
       end
-    end
-  
-    def records(domain)
-      page = @agent.get records_url(domain)
-      records = []
-      page.search("table.actionTable tr")[1..-2].each do |tr|
-        tds = tr.search("td")
-        record, type, dest = tds[1..3].map{ |t| t.inner_text }
-        records << { record: record, type: type, dest: dest }
-      end
-      records
     end
     
   end
@@ -130,30 +202,24 @@ end
 
 record = { name: "asd", type: "MX", dest: "asd.com", priority: 1 }
 
-def add_url(type)   "https://www.ovh.it/managerv3/hosting-domain-zone.pl?xsldoc=hosting%2Fdomain%2Fhosting-domain-zone-#{type}-create.xsl&language=it&domain=accademiacappiello.it"
-end
 
-POST_URL = "https://www.ovh.it/managerv3/hosting-domain-zone.pl"
 
 
 # class Record
 
 
 def add(record) # POST /record
-  url = add_url(record[:type])
-  page = @agent.get url
-  form = page.forms.first
-  form.subdomain = record[:name]
-  form.priority = record[:priority]
-  form.target = record[:dest]
-  page = form.submit
+
 end
 
 
-def delete(record) # DELETE /record
-  post = { subdomain: record, target: dest, editMxAnyway: 1, fieldtype: "#{type} #{priority}", language: "it", domain: "accademiacappiello.it", position: 0, todo: "DnsEntryDelete",  csid: 0, xsldoc: "hosting/domain/hosting-domain-zone.xsl", xsldoc: "hosting/domain/hosting-domain-zone.xsl", hostname: "accademiacappiello.it", service: "accademiacappiello.it"}
+def delete(record, dest, domain_name) # DELETE /record
+  xsldoc = "hosting/domain/hosting-domain-zone.xsl"
+  post = { subdomain: record, target: dest, editMxAnyway: 1, fieldtype: "#{type} #{priority}", language: "it", domain: domain_name, position: 0, todo: "DnsEntryDelete",  csid: 0, xsldoc: xsldoc, lastxsldoc: xsldoc, hostname: domain_name, service: domain_name}
   @agent.post POST_URL, post  
 end
+
+
 
 
 

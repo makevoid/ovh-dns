@@ -17,10 +17,10 @@ module Caching
     puts "caching cookies: #{name}"
     file = cache_path :cookies, name
     if File.exists? file
-      @agent.cookie_jar.load file
+      agent.cookie_jar.load file
     else
       yield
-      @agent.cookie_jar.save_as file
+      agent.cookie_jar.save_as file
     end
   end
   
